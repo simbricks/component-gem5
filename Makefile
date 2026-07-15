@@ -20,6 +20,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# Compilers and python interpreter (overridable by conda / the environment).
+CXX               ?= c++
+PYTHON            ?= python
+
+# Python packages
+GEM5_PY_SIM       := gem5_sim_py
+
 # Optional: redirect conda-build output, e.g. OUTPUT_FOLDER=./conda-out.
 OUTPUT_FOLDER     ?=
 OUTPUT_FLAG       := $(if $(OUTPUT_FOLDER),--output-folder $(OUTPUT_FOLDER))
@@ -29,7 +36,13 @@ OUTPUT_FLAG       := $(if $(OUTPUT_FOLDER),--output-folder $(OUTPUT_FOLDER))
 SIMB_CONDA_CHANNEL:= -c https://conda.simbricks.io/latest
 BASE_BUILD_CMD    := conda build $(SIMB_CONDA_CHANNEL) -m conda-recipes/conda_build_config.yaml $(OUTPUT_FLAG)
 
-.PHONY: all conda-packages pypi-build pypi-publish clean
+.PHONY: all conda-packages pypi-build pypi-publish clean gem5-python-develop
+
+## --- Python packages -------------------------------------------------------
+
+# Editable installs for local development.
+gem5-python-develop:
+	$(PYTHON) -m pip install -e ./$(GEM5_PY_SIM)
 
 ## --- Conda packages --------------------------------------------------------
 
@@ -38,8 +51,10 @@ conda-packages:
 ## --- PyPI packages ---------------------------------------------------------
 
 pypi-build:
+	poetry build -C $(GEM5_PY_SIM)
 
 pypi-publish: pypi-build
+	poetry publish -C $(GEM5_PY_SIM)
 
 ## --- Default target ----------------------------------------------------------
 
@@ -49,3 +64,4 @@ all: conda-packages
 ## --- Housekeeping ----------------------------------------------------------
 
 clean:
+	rm -rf $(GEM5_PY_SIM)/dist
