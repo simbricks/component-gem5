@@ -36,7 +36,8 @@ OUTPUT_FLAG       := $(if $(OUTPUT_FOLDER),--output-folder $(OUTPUT_FOLDER))
 SIMB_CONDA_CHANNEL:= -c https://conda.simbricks.io/latest
 BASE_BUILD_CMD    := conda build $(SIMB_CONDA_CHANNEL) -m conda-recipes/conda_build_config.yaml $(OUTPUT_FLAG)
 
-.PHONY: all conda-packages pypi-build pypi-publish clean gem5-python-develop
+.PHONY: all conda-packages pypi-build pypi-publish clean gem5-python-develop \
+	gem5-sim-py-conda
 
 ## --- Python packages -------------------------------------------------------
 
@@ -46,7 +47,10 @@ gem5-python-develop:
 
 ## --- Conda packages --------------------------------------------------------
 
-conda-packages:
+gem5-sim-py-conda:
+	$(BASE_BUILD_CMD) conda-recipes/simbricks-gem5-sim-py
+
+conda-packages: gem5-sim-py-conda
 
 ## --- PyPI packages ---------------------------------------------------------
 
