@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import os
+
 import typing_extensions as tpe
 
 from simbricks.orchestration.instantiation import base as inst_base
@@ -38,10 +40,31 @@ from simbricks.orchestration.instantiation import socket as inst_socket
 
 class Gem5Sim(sim_host.HostSim):
 
-    def __init__(self, simulation: sim_base.Simulation):
-        super().__init__(
-            simulation=simulation, executable="sims/external/gem5/build/X86/gem5"
-        )
+    def __init__(
+        self,
+        simulation: sim_base.Simulation,
+        executable: str | None = None,
+        config: str | None = None,
+    ):
+        # By default the gem5 binary and config are located with the same
+        # relative layout as a local build (`make gem5-build`):
+        # `gem5/build/X86/gem5.<variant>` and
+        # `gem5/configs/simbricks/simbricks.py`. When installed as the
+        # simbricks-gem5-sim-bin conda package these live under $CONDA_PREFIX
+        # with the identical relative layout, so we simply prepend it when set.
+        # For a build tree elsewhere, you can set GEM5_PREFIX explicitly.
+        gem5_prefix = os.environ.get("GEM5_PREFIX")
+        if gem5_prefix is not None:
+            base = f"{gem5_prefix}/"
+        else:
+            conda_prefix = os.environ.get("CONDA_PREFIX", "")
+            base = f"{conda_prefix}/opt/"
+
+        if executable is None:
+            executable = f"{base}/gem5/build/X86/gem5.fast"
+        if config is None:
+            config = f"{base}gem5/configs/simbricks/simbricks.py"
+        super().__init__(simulation=simulation, executable=executable)
         self.name = f"Gem5Sim-{self._id}"
         self.cpu_type_cp = "X86KvmCPU"
         self.cpu_type = "TimingSimpleCPU"
@@ -49,6 +72,7 @@ class Gem5Sim(sim_host.HostSim):
         self.extra_config_args: list[str] = []
         self._variant: str = "fast"
         self._sys_clock: str = "1GHz"  # TODO: move to system module
+        self._config: str = config
 
     def supports_checkpointing(self) -> bool:
         return True
@@ -70,6 +94,7 @@ class Gem5Sim(sim_host.HostSim):
         json_obj["extra_config_args"] = self.extra_config_args
         json_obj["_variant"] = self._variant
         json_obj["_sys_clock"] = self._sys_clock
+        json_obj["_config"] = self._config
         return json_obj
 
     @classmethod
@@ -85,6 +110,7 @@ class Gem5Sim(sim_host.HostSim):
         )
         instance._variant = utils_base.get_json_attr_top(json_obj, "_variant")
         instance._sys_clock = utils_base.get_json_attr_top(json_obj, "_sys_clock")
+        instance._config = utils_base.get_json_attr_top(json_obj, "_config")
         return instance
 
     async def copy_disk_image(
@@ -112,10 +138,10 @@ class Gem5Sim(sim_host.HostSim):
             raise Exception("Gem5Sim only supports simulating 1 FullSystemHost")
         host_spec = full_sys_hosts[0]
 
-        cmd = f"{inst.env.repo_base(f'{self._executable}.{self._variant}')} --outdir={inst.env.get_simulator_output_dir(sim=self)} "
+        cmd = f"{self._executable}.{self._variant} --outdir={inst.env.get_simulator_output_dir(sim=self)} "
         cmd += " ".join(self.extra_main_args)
         cmd += (
-            f" {inst.env.repo_base('sims/external/gem5/configs/simbricks/simbricks.py')} --caches --l2cache "
+            f" {self._config} --caches --l2cache "
             "--l1d_size=32kB --l1i_size=32kB --l2_size=32MB "
             "--l1d_assoc=8 --l1i_assoc=8 --l2_assoc=16 "
             f"--cacheline_size=64 --cpu-clock={host_spec.cpu_freq}"
