@@ -34,6 +34,20 @@ GEM5_VARIANT      ?= fast
 GEM5_JOBS         ?= $(shell nproc)
 GEM5_BINARY       := $(GEM5_DIR)/build/$(GEM5_ISA)/gem5.$(GEM5_VARIANT)
 
+# gem5's m5 guest utility (built from the submodule with SCons). Unlike the
+# simulator, m5 is a *guest* binary that runs inside the simulated system, so it
+# is compiled for the guest ABI rather than the host. It is later copied into a
+# Linux disk image (e.g. with packer), which is why it gets its own build/install
+# targets. m5's build tree lives under util/m5 and its ABI dir names (see
+# util/m5/src/abi) differ from the gem5 ISA names, so map ISA -> ABI here.
+M5_DIR            := $(GEM5_DIR)/util/m5
+M5_ABI_X86        := x86
+M5_ABI_ARM        := arm64
+M5_ABI_RISCV      := riscv
+M5_ABI_SPARC      := sparc
+M5_ABI            ?= $(or $(M5_ABI_$(GEM5_ISA)),x86)
+M5_BINARY         := $(M5_DIR)/build/$(M5_ABI)/out/m5
+
 # Install prefix for `gem5-install`; conda-build sets this to the package prefix.
 PREFIX            ?= /usr/local
 
@@ -53,7 +67,8 @@ SIMB_CONDA_CHANNEL:= -c https://conda.simbricks.io/latest
 BASE_BUILD_CMD    := conda build $(SIMB_CONDA_CHANNEL) -m conda-recipes/conda_build_config.yaml $(OUTPUT_FLAG)
 
 .PHONY: all conda-packages pypi-build pypi-publish clean gem5-python-develop \
-	gem5-sim-py-conda gem5-build gem5-install gem5-clean gem5-bin-conda
+	gem5-sim-py-conda gem5-build gem5-install gem5-clean gem5-bin-conda \
+	m5-build m5-install m5-clean
 
 ## --- Python packages -------------------------------------------------------
 
@@ -95,6 +110,25 @@ gem5-install: gem5-build
 gem5-clean:
 	rm -rf $(GEM5_DIR)/build
 
+## --- m5 guest utility ------------------------------------------------------
+
+# Build only the m5 binary for the target ABI. Naming an explicit target avoids
+# SCons's default of building every ABI (which would need all the cross
+# compilers); the m5 SConstruct is self-contained and needs no SimBricks flags.
+m5-build:
+	cd $(M5_DIR) && scons build/$(M5_ABI)/out/m5 -j$(GEM5_JOBS)
+
+# Install the m5 binary under $(PREFIX) at a predictable, ABI-qualified path so a
+# later image build (e.g. packer) can pick it up and drop it into the guest
+# image. Depends on the build target so the binary is always (re)built first.
+m5-install: m5-build
+	install -d $(PREFIX)/opt/$(GEM5_DIR)/util/m5/$(M5_ABI)
+	install -m 0755 $(M5_BINARY) \
+	  $(PREFIX)/opt/$(GEM5_DIR)/util/m5/$(M5_ABI)/m5
+
+m5-clean:
+	rm -rf $(M5_DIR)/build
+
 ## --- Conda packages --------------------------------------------------------
 
 gem5-sim-py-conda:
@@ -120,5 +154,5 @@ all: conda-packages
 
 ## --- Housekeeping ----------------------------------------------------------
 
-clean: gem5-clean
+clean: gem5-clean m5-clean
 	rm -rf $(GEM5_PY_SIM)/dist
