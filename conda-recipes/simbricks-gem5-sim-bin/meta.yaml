@@ -45,11 +45,11 @@ requirements:
     - pkg-config
     - python >=3.10
   host:
-    - python >=3.10
+    - python
     - simbricks-lib >=0.4.2      # headers + libsimbricks for the <simbricks/...> build
     - zlib
   run:
-    - python >=3.10
+    - python
     - simbricks-gem5-sim-py =={{ simbricks_version }}   # internal, co-built -> == pin
     - simbricks-lib >=0.4.2
 
