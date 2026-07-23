@@ -61,7 +61,7 @@ class Gem5Sim(sim_host.HostSim):
             base = f"{conda_prefix}/opt/"
 
         if executable is None:
-            executable = f"{base}/gem5/build/X86/gem5.fast"
+            executable = f"{base}/gem5/build/X86/gem5"
         if config is None:
             config = f"{base}gem5/configs/simbricks/simbricks.py"
         super().__init__(simulation=simulation, executable=executable)
