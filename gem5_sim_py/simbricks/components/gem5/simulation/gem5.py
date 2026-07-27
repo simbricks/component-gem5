@@ -46,13 +46,6 @@ class Gem5Sim(sim_host.HostSim):
         executable: str | None = None,
         config: str | None = None,
     ):
-        # By default the gem5 binary and config are located with the same
-        # relative layout as a local build (`make gem5-build`):
-        # `gem5/build/X86/gem5.<variant>` and
-        # `gem5/configs/simbricks/simbricks.py`. When installed as the
-        # simbricks-gem5-sim-bin conda package these live under $CONDA_PREFIX
-        # with the identical relative layout, so we simply prepend it when set.
-        # For a build tree elsewhere, you can set GEM5_PREFIX explicitly.
         gem5_prefix = os.environ.get("GEM5_PREFIX")
         if gem5_prefix is not None:
             base = f"{gem5_prefix}/"
@@ -68,6 +61,7 @@ class Gem5Sim(sim_host.HostSim):
         self.name = f"Gem5Sim-{self._id}"
         self.cpu_type_cp = "X86KvmCPU"
         self.cpu_type = "TimingSimpleCPU"
+        self.kernel_path = "global_input/images/vmlinux"
         self.extra_main_args: list[str] = []
         self.extra_config_args: list[str] = []
         self._variant: str = "fast"
@@ -90,6 +84,7 @@ class Gem5Sim(sim_host.HostSim):
         json_obj = super().toJSON()
         json_obj["cpu_type_cp"] = self.cpu_type_cp
         json_obj["cpu_type"] = self.cpu_type
+        json_obj["kernel_path"] = self.kernel_path
         json_obj["extra_main_args"] = self.extra_main_args
         json_obj["extra_config_args"] = self.extra_config_args
         json_obj["_variant"] = self._variant
@@ -102,6 +97,7 @@ class Gem5Sim(sim_host.HostSim):
         instance = super().fromJSON(simulation, json_obj)
         instance.cpu_type_cp = utils_base.get_json_attr_top(json_obj, "cpu_type_cp")
         instance.cpu_type = utils_base.get_json_attr_top(json_obj, "cpu_type")
+        instance.kernel_path = utils_base.get_json_attr_top(json_obj, "kernel_path")
         instance.extra_main_args = utils_base.get_json_attr_top(
             json_obj, "extra_main_args"
         )
@@ -147,7 +143,7 @@ class Gem5Sim(sim_host.HostSim):
             f"--cacheline_size=64 --cpu-clock={host_spec.cpu_freq}"
             f" --sys-clock={self._sys_clock} "
             f"--checkpoint-dir={inst.env.cpdir_sim(sim=self)} "
-            f"--kernel={inst.env.repo_base('images/vmlinux')} "
+            f"--kernel={inst.env.work_dir_or_abs(self.kernel_path, True)} "
         )
 
         assert host_spec in self._disk_images
