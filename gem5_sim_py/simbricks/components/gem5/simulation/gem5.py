@@ -61,7 +61,7 @@ class Gem5Sim(sim_host.HostSim):
         self.name = f"Gem5Sim-{self._id}"
         self.cpu_type_cp = "X86KvmCPU"
         self.cpu_type = "TimingSimpleCPU"
-        self.kernel_path = "global_input/images/vmlinux"
+        self.kernel_path: str | None = None
         self.extra_main_args: list[str] = []
         self.extra_config_args: list[str] = []
         self._variant: str = "fast"
@@ -84,7 +84,8 @@ class Gem5Sim(sim_host.HostSim):
         json_obj = super().toJSON()
         json_obj["cpu_type_cp"] = self.cpu_type_cp
         json_obj["cpu_type"] = self.cpu_type
-        json_obj["kernel_path"] = self.kernel_path
+        if self.kernel_path:
+            json_obj["kernel_path"] = self.kernel_path
         json_obj["extra_main_args"] = self.extra_main_args
         json_obj["extra_config_args"] = self.extra_config_args
         json_obj["_variant"] = self._variant
@@ -97,7 +98,7 @@ class Gem5Sim(sim_host.HostSim):
         instance = super().fromJSON(simulation, json_obj)
         instance.cpu_type_cp = utils_base.get_json_attr_top(json_obj, "cpu_type_cp")
         instance.cpu_type = utils_base.get_json_attr_top(json_obj, "cpu_type")
-        instance.kernel_path = utils_base.get_json_attr_top(json_obj, "kernel_path")
+        instance.kernel_path = utils_base.get_json_attr_top_or_none(json_obj, "kernel_path")
         instance.extra_main_args = utils_base.get_json_attr_top(
             json_obj, "extra_main_args"
         )
@@ -143,10 +144,21 @@ class Gem5Sim(sim_host.HostSim):
             f"--cacheline_size=64 --cpu-clock={host_spec.cpu_freq}"
             f" --sys-clock={self._sys_clock} "
             f"--checkpoint-dir={inst.env.cpdir_sim(sim=self)} "
-            f"--kernel={inst.env.work_dir_or_abs(self.kernel_path, True)} "
         )
+        
+        if host_spec not in self._disk_images or len(self._disk_images) < 1:
+            raise RuntimeError("Gem5 requires at least one disk image")
 
-        assert host_spec in self._disk_images
+        if self.kernel_path is not None:
+            cmd += f"--kernel {inst.env.work_dir_or_abs(self.kernel_path, True)} "
+        else:
+            distro_disk = self._disk_images[0][0]
+            if isinstance(distro_disk, disk_images.DistroDiskImage):
+                imp = f"global_input/images/{distro_disk.name}/boot/vmlinux"
+                cmd += f"-kernel {inst.env.work_dir_or_abs(imp, True)}"
+            else:
+                raise RuntimeError("Neither a distro disk image nor a kernel path were specified")
+        
         for disk in self._disk_images[host_spec]:
             cmd += f"--disk-image={disk[1]} "
 
