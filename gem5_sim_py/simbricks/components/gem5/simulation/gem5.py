@@ -47,10 +47,6 @@ class Gem5Sim(sim_host.HostSim):
         config: str | None = None,
     ):
         super().__init__(simulation=simulation, executable="" if executable is None else executable)
-        self.resolve_exe = utils_file.build_path_resolver("opt", "GEM5_PREFIX", None, "gem5/build/X86/gem5")
-        self.resolve_conf = utils_file.build_path_resolver(
-            "opt", "GEM5_PREFIX", None, "gem5/configs/simbricks/simbricks.py"
-        )
         self.name = f"Gem5Sim-{self._id}"
         self.cpu_type_cp = "X86KvmCPU"
         self.cpu_type = "TimingSimpleCPU"
@@ -124,8 +120,13 @@ class Gem5Sim(sim_host.HostSim):
             raise Exception("Gem5Sim only supports simulating 1 FullSystemHost")
         host_spec = full_sys_hosts[0]
 
-        exe = self.resolve_exe(self._executable)
-        conf = self.resolve_conf(self._config)
+        resolve_exe = utils_file.build_path_resolver("opt", "GEM5_PREFIX", None, "gem5/build/X86/gem5")
+        exe = resolve_exe(self._executable)
+        
+        resolve_conf = utils_file.build_path_resolver(
+            "opt", "GEM5_PREFIX", None, "gem5/configs/simbricks/simbricks.py"
+        )
+        conf = resolve_conf(self._config)
 
         cmd = f"{exe}.{self._variant} --outdir={inst.env.get_simulator_output_dir(sim=self)} "
         cmd += " ".join(self.extra_main_args)
