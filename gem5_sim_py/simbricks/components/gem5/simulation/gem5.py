@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import os
-
+import typing
 import typing_extensions as tpe
 
 from simbricks.orchestration.instantiation import base as inst_base
@@ -46,18 +46,11 @@ class Gem5Sim(sim_host.HostSim):
         executable: str | None = None,
         config: str | None = None,
     ):
-        gem5_prefix = os.environ.get("GEM5_PREFIX")
-        if gem5_prefix is not None:
-            base = f"{gem5_prefix}/"
-        else:
-            conda_prefix = os.environ.get("CONDA_PREFIX", "")
-            base = f"{conda_prefix}/opt/"
-
-        if executable is None:
-            executable = f"{base}/gem5/build/X86/gem5"
-        if config is None:
-            config = f"{base}gem5/configs/simbricks/simbricks.py"
-        super().__init__(simulation=simulation, executable=executable)
+        super().__init__(simulation=simulation, executable="" if executable is None else executable)
+        self.resolve_exe = utils_file.build_path_resolver("opt", "GEM5_PREFIX", None, "gem5/build/X86/gem5")
+        self.resolve_conf = utils_file.build_path_resolver(
+            "opt", "GEM5_PREFIX", None, "gem5/configs/simbricks/simbricks.py"
+        )
         self.name = f"Gem5Sim-{self._id}"
         self.cpu_type_cp = "X86KvmCPU"
         self.cpu_type = "TimingSimpleCPU"
@@ -99,12 +92,8 @@ class Gem5Sim(sim_host.HostSim):
         instance.cpu_type_cp = utils_base.get_json_attr_top(json_obj, "cpu_type_cp")
         instance.cpu_type = utils_base.get_json_attr_top(json_obj, "cpu_type")
         instance.kernel_path = utils_base.get_json_attr_top_or_none(json_obj, "kernel_path")
-        instance.extra_main_args = utils_base.get_json_attr_top(
-            json_obj, "extra_main_args"
-        )
-        instance.extra_config_args = utils_base.get_json_attr_top(
-            json_obj, "extra_config_args"
-        )
+        instance.extra_main_args = utils_base.get_json_attr_top(json_obj, "extra_main_args")
+        instance.extra_config_args = utils_base.get_json_attr_top(json_obj, "extra_config_args")
         instance._variant = utils_base.get_json_attr_top(json_obj, "_variant")
         instance._sys_clock = utils_base.get_json_attr_top(json_obj, "_sys_clock")
         instance._config = utils_base.get_json_attr_top(json_obj, "_config")
@@ -135,17 +124,20 @@ class Gem5Sim(sim_host.HostSim):
             raise Exception("Gem5Sim only supports simulating 1 FullSystemHost")
         host_spec = full_sys_hosts[0]
 
-        cmd = f"{self._executable}.{self._variant} --outdir={inst.env.get_simulator_output_dir(sim=self)} "
+        exe = self.resolve_exe(self._executable)
+        conf = self.resolve_conf(self._config)
+
+        cmd = f"{exe}.{self._variant} --outdir={inst.env.get_simulator_output_dir(sim=self)} "
         cmd += " ".join(self.extra_main_args)
         cmd += (
-            f" {self._config} --caches --l2cache "
+            f" {conf} --caches --l2cache "
             "--l1d_size=32kB --l1i_size=32kB --l2_size=32MB "
             "--l1d_assoc=8 --l1i_assoc=8 --l2_assoc=16 "
             f"--cacheline_size=64 --cpu-clock={host_spec.cpu_freq}"
             f" --sys-clock={self._sys_clock} "
             f"--checkpoint-dir={inst.env.cpdir_sim(sim=self)} "
         )
-        
+
         if host_spec not in self._disk_images or len(self._disk_images) < 1:
             raise RuntimeError("Gem5 requires at least one disk image")
 
@@ -158,7 +150,7 @@ class Gem5Sim(sim_host.HostSim):
                 cmd += f"--kernel {inst.env.work_dir_or_abs(imp, True)} "
             else:
                 raise RuntimeError("Neither a distro disk image nor a kernel path were specified")
-        
+
         for disk in self._disk_images[host_spec]:
             cmd += f"--disk-image={disk[1]} "
 
@@ -178,10 +170,8 @@ class Gem5Sim(sim_host.HostSim):
             cmd += "-r 1 "
 
         if len(self.get_channels()) > 0:
-            latency, sync_period, run_sync = (
-                sim_base.Simulator.get_unique_latency_period_sync(
-                    channels=self.get_channels()
-                )
+            latency, sync_period, run_sync = sim_base.Simulator.get_unique_latency_period_sync(
+                channels=self.get_channels()
             )
 
         fsh_interfaces = host_spec.interfaces()
@@ -190,7 +180,7 @@ class Gem5Sim(sim_host.HostSim):
             interfaces=fsh_interfaces, ty=sys_pcie.PCIeHostInterface
         )
         for inf in pci_interfaces:
-            assert(len(self.get_channels()) > 0)
+            assert len(self.get_channels()) > 0
             socket = inst.get_socket(interface=inf)
             if socket is None:
                 continue
@@ -208,7 +198,7 @@ class Gem5Sim(sim_host.HostSim):
             interfaces=fsh_interfaces, ty=sys_mem.MemHostInterface
         )
         for inf in mem_interfaces:
-            assert(len(self.get_channels()) > 0)
+            assert len(self.get_channels()) > 0
             socket = inst.get_socket(interface=inf)
             if socket is None:
                 continue
