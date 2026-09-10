@@ -67,6 +67,9 @@ class Gem5Sim(sim_host.HostSim):
         return 1024
 
     def supported_image_formats(self) -> list[str]:
+        # gem5 reads disks through RawDiskImage only, so raw is not a preference but the
+        # only thing it can open. A layered image gets flattened to raw once and cached;
+        # an HttpDiskImage has to be declared format="raw" or be wrapped in a layered one.
         return ["raw"]
 
     def toJSON(self) -> dict:
@@ -100,9 +103,30 @@ class Gem5Sim(sim_host.HostSim):
     ):
         return disk_image.path(inst, disk_image.find_format(self))
 
+    def _host_spec(self) -> sys_host.BaseLinuxHost:
+        full_sys_hosts = self.filter_components_by_type(ty=sys_host.BaseLinuxHost)
+        if len(full_sys_hosts) != 1:
+            raise Exception("Gem5Sim only supports simulating 1 FullSystemHost")
+        return full_sys_hosts[0]
+
     async def prepare(self, inst: inst_base.Instantiation) -> None:
         await super().prepare(inst=inst)
         utils_file.mkdir(inst.env.cpdir_sim(sim=self))
+
+        if self.kernel_path is None:
+            host_spec = self._host_spec()
+            try:
+                await self.pull_boot_artifacts(inst, host_spec, [disk_images.BootArtifact.VMLINUX])
+            except Exception as err:
+                raise RuntimeError(
+                    f"{self.full_name()}: could not get an uncompressed kernel"
+                    f" ('{disk_images.BootArtifact.VMLINUX.value}') from the boot disk of"
+                    f" '{host_spec.name or host_spec.id()}': {err}. gem5 loads the kernel"
+                    " as an ELF object file, so a compressed vmlinuz cannot stand in for"
+                    " it. Either make the image provide it (a distro image ships it as"
+                    " images/<name>/boot/vmlinux, an external or http image via boot_dir=),"
+                    " or set Gem5Sim.kernel_path to an uncompressed kernel."
+                ) from err
 
     def checkpoint_commands(self) -> list[str]:
         return ["m5 checkpoint"]
@@ -115,10 +139,7 @@ class Gem5Sim(sim_host.HostSim):
         if inst.create_checkpoint:
             cpu_type = self.cpu_type_cp
 
-        full_sys_hosts = self.filter_components_by_type(ty=sys_host.BaseLinuxHost)
-        if len(full_sys_hosts) != 1:
-            raise Exception("Gem5Sim only supports simulating 1 FullSystemHost")
-        host_spec = full_sys_hosts[0]
+        host_spec = self._host_spec()
 
         resolve_exe = utils_file.build_path_resolver("opt", "GEM5_PREFIX", None, "gem5/build/X86/gem5")
         exe = resolve_exe(self._executable)
@@ -139,21 +160,20 @@ class Gem5Sim(sim_host.HostSim):
             f"--checkpoint-dir={inst.env.cpdir_sim(sim=self)} "
         )
 
-        if host_spec not in self._disk_images or len(self._disk_images) < 1:
+        host_disks = self._disk_images.get(host_spec)
+        if not host_disks:
             raise RuntimeError("Gem5 requires at least one disk image")
 
         if self.kernel_path is not None:
-            cmd += f"--kernel {inst.env.work_dir_or_abs(self.kernel_path, True)} "
+            kernel = inst.env.work_dir_or_abs(self.kernel_path, True)
         else:
-            distro_disk = self._disk_images[host_spec][0][0]
-            if isinstance(distro_disk, disk_images.DistroDiskImage):
-                imp = f"global_input/images/{distro_disk.name}/boot/vmlinux"
-                cmd += f"--kernel {inst.env.work_dir_or_abs(imp, True)} "
-            else:
-                raise RuntimeError("Neither a distro disk image nor a kernel path were specified")
+            kernel = self.boot_artifact(host_spec, disk_images.BootArtifact.VMLINUX)
+        cmd += f"--kernel {kernel} "
 
-        for disk in self._disk_images[host_spec]:
-            cmd += f"--disk-image={disk[1]} "
+        # In the order the host lists them, so the boot disk stays first -- the same disk
+        # the kernel above was taken from.
+        for _, disk_path in host_disks:
+            cmd += f"--disk-image={disk_path} "
 
         cmd += (
             f"--cpu-type={cpu_type} --mem-size={host_spec.memory}MB "
