@@ -67,10 +67,9 @@ class Gem5Sim(sim_host.HostSim):
         return 1024
 
     def supported_image_formats(self) -> list[str]:
-        # gem5 reads disks through RawDiskImage only, so raw is not a preference but the
-        # only thing it can open. A layered image gets flattened to raw once and cached;
-        # an HttpDiskImage has to be declared format="raw" or be wrapped in a layered one.
-        return ["raw"]
+        # qcow2 first so a cached chain is linked in rather than flattened; gem5 picks the
+        # reader by magic anyway. raw stays for the images that only offer it.
+        return ["qcow2", "raw"]
 
     def toJSON(self) -> dict:
         json_obj = super().toJSON()
@@ -113,20 +112,10 @@ class Gem5Sim(sim_host.HostSim):
         await super().prepare(inst=inst)
         utils_file.mkdir(inst.env.cpdir_sim(sim=self))
 
-        if self.kernel_path is None:
-            host_spec = self._host_spec()
-            try:
-                await self.pull_boot_artifacts(inst, host_spec, [disk_images.BootArtifact.VMLINUX])
-            except Exception as err:
-                raise RuntimeError(
-                    f"{self.full_name()}: could not get an uncompressed kernel"
-                    f" ('{disk_images.BootArtifact.VMLINUX.value}') from the boot disk of"
-                    f" '{host_spec.name or host_spec.id()}': {err}. gem5 loads the kernel"
-                    " as an ELF object file, so a compressed vmlinuz cannot stand in for"
-                    " it. Either make the image provide it (a distro image ships it as"
-                    " images/<name>/boot/vmlinux, an external or http image via boot_dir=),"
-                    " or set Gem5Sim.kernel_path to an uncompressed kernel."
-                ) from err
+        # An explicit kernel_path overrides the image's own, so only fetch when unset.
+        if self.kernel_path is not None:
+            return
+        await self.pull_boot_artifacts(inst, self._host_spec(), [disk_images.BootArtifact.VMLINUX])
 
     def checkpoint_commands(self) -> list[str]:
         return ["m5 checkpoint"]
@@ -167,7 +156,14 @@ class Gem5Sim(sim_host.HostSim):
         if self.kernel_path is not None:
             kernel = inst.env.work_dir_or_abs(self.kernel_path, True)
         else:
-            kernel = self.boot_artifact(host_spec, disk_images.BootArtifact.VMLINUX)
+            try:
+                kernel = self.boot_artifact(host_spec, disk_images.BootArtifact.VMLINUX)
+            except Exception as err:
+                raise RuntimeError(
+                    f"{self.full_name()}: no 'vmlinux' from the boot disk; gem5 loads the"
+                    " kernel as an ELF. Use an image that ships one, or set"
+                    " Gem5Sim.kernel_path."
+                ) from err
         cmd += f"--kernel {kernel} "
 
         # In the order the host lists them, so the boot disk stays first -- the same disk
@@ -194,6 +190,7 @@ class Gem5Sim(sim_host.HostSim):
             latency, sync_period, run_sync = sim_base.Simulator.get_unique_latency_period_sync(
                 channels=self.get_channels()
             )
+            sync = run_sync and not inst.create_checkpoint
 
         fsh_interfaces = host_spec.interfaces()
 
@@ -206,14 +203,10 @@ class Gem5Sim(sim_host.HostSim):
             if socket is None:
                 continue
             assert socket._type == inst_socket.SockType.CONNECT
-            cmd += (
-                f"--simbricks-pci=connect:{socket._path}"
-                f":latency={latency}ns"
-                f":sync_interval={sync_period}ns"
+            url = self.get_parameters_url(
+                inst, socket, sync=sync, latency=latency, sync_period=sync_period
             )
-            if run_sync and not inst.create_checkpoint:
-                cmd += ":sync"
-            cmd += " "
+            cmd += f"--simbricks-pci={url} "
 
         mem_interfaces = sys_base.Interface.filter_by_type(
             interfaces=fsh_interfaces, ty=sys_mem.MemHostInterface
@@ -224,17 +217,14 @@ class Gem5Sim(sim_host.HostSim):
             if socket is None:
                 continue
             assert socket._type == inst_socket.SockType.CONNECT
-            utils_base.has_expected_type(inf.component, sys_mem.MemSimpleDevice)
-            dev: sys_mem.MemSimpleDevice = inf.component
-            cmd += (
-                f"--simbricks-mem={dev._size}@{dev._addr}@{dev._as_id}@"
-                f"connect:{socket._path}"
-                f":latency={latency}ns"
-                f":sync_interval={sync_period}ns"
+            # inf is the host's own interface, so the device is on the other end of it.
+            peer = inf.get_opposing_interface().component
+            utils_base.has_expected_type(peer, sys_mem.MemSimpleDevice)
+            dev: sys_mem.MemSimpleDevice = peer
+            url = self.get_parameters_url(
+                inst, socket, sync=sync, latency=latency, sync_period=sync_period
             )
-            if run_sync and not inst.create_checkpoint:
-                cmd += ":sync"
-            cmd += " "
+            cmd += f"--simbricks-mem={dev._size}@{dev._addr}@{dev._as_id}@{url} "
 
         # TODO: FIXME
         # for net in self.net_directs:
