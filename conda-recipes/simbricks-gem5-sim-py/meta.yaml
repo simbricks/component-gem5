@@ -41,8 +41,8 @@ requirements:
     - pip
   run:
     - python >=3.12
-    - simbricks-orchestration >=0.5.0
-    - simbricks-utils >=0.5.0
+    - simbricks-orchestration >=0.6.0
+    - simbricks-utils >=0.6.0
 
 test:
   imports:
