@@ -68,3 +68,12 @@ make gem5-install \
   GEM5_JOBS="${CPU_COUNT}" \
   SIMBRICKS_INC_DIR="${PREFIX}/include" \
   SIMBRICKS_LIB_DIR="${PREFIX}/lib"
+
+# Also build the opt variant
+make gem5-install \
+  PREFIX="${PREFIX}" \
+  GEM5_ISA="X86" \
+  GEM5_VARIANT="opt" \
+  GEM5_JOBS="${CPU_COUNT}" \
+  SIMBRICKS_INC_DIR="${PREFIX}/include" \
+  SIMBRICKS_LIB_DIR="${PREFIX}/lib"
